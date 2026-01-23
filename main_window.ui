@@ -1,0 +1,335 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="windowTitle">
+   <string>包子のDNF工具</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QVBoxLayout" name="verticalLayout_root">
+    <item>
+     <layout class="QVBoxLayout" name="layoutTopBar">
+      <item>
+       <layout class="QHBoxLayout" name="layoutTopControls">
+      <item>
+       <widget class="QPushButton" name="btnStart">
+        <property name="text">
+         <string>Start</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btnStop">
+        <property name="text">
+         <string>Stop</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <spacer name="spacerTop1">
+        <property name="orientation">
+         <enum>Qt::Orientation::Horizontal</enum>
+        </property>
+        <property name="sizeHint" stdset="0">
+         <size>
+        <width>18</width>
+        <height>0</height>
+         </size>
+        </property>
+       </spacer>
+      </item>
+      <item>
+       <spacer name="spacerTopStretch">
+        <property name="orientation">
+         <enum>Qt::Orientation::Horizontal</enum>
+        </property>
+        <property name="sizeHint" stdset="0">
+         <size>
+        <width>40</width>
+        <height>0</height>
+         </size>
+        </property>
+       </spacer>
+      </item>
+      <item>
+       <widget class="QLabel" name="lblStatus">
+        <property name="text">
+         <string>Status: stopped</string>
+        </property>
+       </widget>
+      </item>
+       </layout>
+      </item>
+      <item>
+       <layout class="QHBoxLayout" name="layoutTopFiles">
+      <item>
+       <widget class="QPushButton" name="btnReload">
+        <property name="text">
+         <string>Reload macros.json</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btnSave">
+        <property name="text">
+         <string>Save macros.json</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <spacer name="spacerTopFiles">
+        <property name="orientation">
+         <enum>Qt::Orientation::Horizontal</enum>
+        </property>
+        <property name="sizeHint" stdset="0">
+         <size>
+        <width>40</width>
+        <height>0</height>
+         </size>
+        </property>
+       </spacer>
+      </item>
+       </layout>
+      </item>
+     </layout>
+    </item>
+
+    <item>
+     <layout class="QVBoxLayout" name="layoutProfile">
+      <item>
+       <layout class="QHBoxLayout" name="layoutProfileMain">
+        <item>
+         <widget class="QLabel" name="lblProfileTitle">
+          <property name="text">
+           <string>Profile:</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QComboBox" name="comboProfile"/>
+        </item>
+        <item>
+         <widget class="QPushButton" name="btnAddProfile">
+          <property name="text">
+           <string>Add Profile</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="btnRenameProfile">
+          <property name="text">
+           <string>Rename Profile</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+      <item>
+       <layout class="QHBoxLayout" name="layoutProfileActions">
+        <item>
+         <widget class="QPushButton" name="btnDeleteProfile">
+          <property name="text">
+           <string>Delete Profile</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="btnSetDefault">
+          <property name="text">
+           <string>Set Default</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="btnCaptureProfileImage">
+          <property name="text">
+           <string>Capture Profile Image</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <spacer name="spacerProfileActions">
+          <property name="orientation">
+           <enum>Qt::Orientation::Horizontal</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>40</width>
+            <height>0</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+       </layout>
+      </item>
+     </layout>
+    </item>
+
+    <item>
+     <widget class="QLabel" name="lblDefault">
+      <property name="text">
+       <string>Default: (none)</string>
+      </property>
+     </widget>
+    </item>
+
+    <item>
+     <layout class="QHBoxLayout" name="layoutAutoSwitch">
+      <item>
+       <widget class="QCheckBox" name="chkAutoSwitch">
+        <property name="text">
+         <string>Auto Switch Profile</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="lblAutoSwitchInterval">
+        <property name="text">
+         <string>Interval (s):</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLineEdit" name="editAutoSwitchInterval">
+        <property name="text">
+         <string>2.0</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <spacer name="spacerAutoSwitch">
+        <property name="orientation">
+         <enum>Qt::Orientation::Horizontal</enum>
+        </property>
+        <property name="sizeHint" stdset="0">
+         <size>
+          <width>40</width>
+          <height>0</height>
+         </size>
+        </property>
+       </spacer>
+      </item>
+     </layout>
+    </item>
+
+    <item>
+     <layout class="QHBoxLayout" name="layoutKey">
+      <item>
+       <widget class="QLabel" name="lblKeyTitle">
+        <property name="text">
+         <string>Key:</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QComboBox" name="comboKey"/>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btnAddKey">
+        <property name="text">
+         <string>Add Key</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btnDeleteKey">
+        <property name="text">
+         <string>Delete Key</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </item>
+
+    <item>
+     <widget class="QLabel" name="lblStepsTitle">
+      <property name="text">
+       <string>Steps: (press/down/up + delay steps)</string>
+      </property>
+     </widget>
+    </item>
+
+    <item>
+     <widget class="QListWidget" name="listSteps"/>
+    </item>
+
+    <item>
+     <layout class="QHBoxLayout" name="layoutStepButtons">
+      <item>
+       <widget class="QPushButton" name="btnAddStep">
+        <property name="text">
+         <string>Add Step</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btnEditStep">
+        <property name="text">
+         <string>Edit Step</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btnDeleteStep">
+        <property name="text">
+         <string>Delete Step</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <spacer name="spacerStepButtons">
+        <property name="orientation">
+         <enum>Qt::Orientation::Horizontal</enum>
+        </property>
+        <property name="sizeHint" stdset="0">
+         <size>
+          <width>18</width>
+          <height>0</height>
+         </size>
+        </property>
+       </spacer>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btnMoveUp">
+        <property name="text">
+         <string>Move Up</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btnMoveDown">
+        <property name="text">
+         <string>Move Down</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <spacer name="spacerStepStretch">
+        <property name="orientation">
+         <enum>Qt::Orientation::Horizontal</enum>
+        </property>
+        <property name="sizeHint" stdset="0">
+         <size>
+          <width>40</width>
+          <height>0</height>
+         </size>
+        </property>
+       </spacer>
+      </item>
+     </layout>
+    </item>
+
+    <item>
+     <widget class="QLabel" name="lblFocusGate">
+      <property name="text">
+       <string>Focus gate: (not running)</string>
+      </property>
+     </widget>
+    </item>
+
+   </layout>
+  </widget>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

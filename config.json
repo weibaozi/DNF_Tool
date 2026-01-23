@@ -1,0 +1,58 @@
+{
+  "default_profile": "default",
+  "profiles": {
+    "default": {},
+    "\u6b7b\u7075": {
+      "w": [
+        {
+          "type": "delay",
+          "time": 0.35
+        },
+        {
+          "type": "press",
+          "key": "shift"
+        }
+      ],
+      "v": [
+        {
+          "type": "press",
+          "key": "space"
+        }
+      ],
+      "g": [
+        {
+          "type": "press",
+          "key": "v"
+        },
+        {
+          "type": "delay",
+          "time": 0.001
+        },
+        {
+          "type": "press",
+          "key": "shift"
+        },
+        {
+          "type": "delay",
+          "time": 0.04
+        },
+        {
+          "type": "press",
+          "key": "space"
+        }
+      ]
+    },
+    "\u54c8\u57fa\u7c73": {
+      "s": [
+        {
+          "type": "delay",
+          "time": 0.7
+        },
+        {
+          "type": "press",
+          "key": "shift"
+        }
+      ]
+    }
+  }
+}
