@@ -8,33 +8,37 @@ import pydirectinput
 import cv2
 from PyQt6 import uic
 
+pydirectinput.PAUSE = 0.001
+
 from overlay_status import OverlayConfig, OverlayStatus
 from myUtils import window_capture, template_match_any, TITLE, SKILLA_CROP, save_image
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QIcon
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent
+from PyQt6.QtGui import QIcon, QAction
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QComboBox, QListWidget,
     QMessageBox, QInputDialog, QDialog, QDialogButtonBox,
-    QLineEdit
+    QLineEdit, QSystemTrayIcon, QMenu
 )
 
 # ----------------- Settings -----------------
 
 CONFIG_PATH = "config.json"
-DNF_WINDOW_IDENTIFIERS = ["地下城与勇士", "DNF"]  # only run macros when focused window title contains any of these
-OVERLAY_X = 30
+DNF_WINDOW_IDENTIFIERS = ["地下城与勇士：创新世纪"]  # only run macros when focused window title contains any of these
+OVERLAY_X = 3470
 OVERLAY_Y = 30
 TOGGLE_HOTKEY = "f1"
 CONFIGS_DIR = "configs"
-AUTO_SWITCH_THRESHOLD = 0.7
-AUTO_SWITCH_INTERVAL_DEFAULT = 2.0
+AUTO_SWITCH_THRESHOLD = 0.8
+AUTO_SWITCH_INTERVAL_DEFAULT = 1.0
 CAPTURE_CROP = SKILLA_CROP
 AUTO_SWITCH_CROP = SKILLA_CROP
-AUTO_SWITCH_LOW_SCORE_THRESHOLD = 0.5
+AUTO_SWITCH_LOW_SCORE_THRESHOLD = 0.45
 AUTO_SWITCH_LOW_SCORE_DURATION = 35.0
+CLICK_DELAY_DEFAULT = 0.01
+KEY_PRESS_DELAY_DEFAULT = 0.01
 
 
 # ----------------- Window detection (Windows) -----------------
@@ -69,11 +73,13 @@ class MacroEngine:
     """
     Hooks keys for the current profile, runs steps on key-down.
 
-    Step format:
-      - {"type": "press", "key": "..."}
-      - {"type": "down",  "key": "..."}
-      - {"type": "up",    "key": "..."}
-      - {"type": "delay", "time": 0.3}
+        Step format:
+            - {"type": "press",      "key": "..."}
+            - {"type": "down",       "key": "..."}
+            - {"type": "up",         "key": "..."}
+            - {"type": "click_left"}
+            - {"type": "click_right"}
+            - {"type": "delay",      "time": 0.3}
     """
     def __init__(self):
         self.profiles = {}
@@ -138,7 +144,7 @@ class MacroEngine:
     def _run_steps(self, steps: list):
         for step in steps:
             t = step.get("type")
-
+            # print(f"Executing step: {step}")
             if t == "delay":
                 try:
                     secs = float(step.get("time", 0.0) or 0.0)
@@ -149,15 +155,29 @@ class MacroEngine:
                 continue
 
             key = step.get("key")
-            if not key:
+            if not key and t not in ["click_left", "click_right"]:
                 continue
 
             if t == "press":
-                pydirectinput.press(key)
+                pydirectinput.keyDown(key)
+                time.sleep(KEY_PRESS_DELAY_DEFAULT)
+                pydirectinput.keyUp(key)
             elif t == "down":
                 pydirectinput.keyDown(key)
             elif t == "up":
                 pydirectinput.keyUp(key)
+            elif t == "click_left":
+                pydirectinput.mouseDown(button='left')
+                # print("click left down")
+                time.sleep(CLICK_DELAY_DEFAULT)
+                pydirectinput.mouseUp(button='left')
+            elif t == "click_right":
+                # print("click right down")
+                pydirectinput.mouseDown(button='right')
+                time.sleep(CLICK_DELAY_DEFAULT)
+                pydirectinput.mouseUp(button='right')
+            else:
+                print(f"Unknown step type: {t}")
 
     def _on_key(self, event, trigger_key: str):
         if event.event_type != "down":
@@ -190,7 +210,7 @@ class StepDialog(QDialog):
         self._result_step = None
 
         self.type_combo = QComboBox(self)
-        self.type_combo.addItems(["press", "down", "up", "delay"])
+        self.type_combo.addItems(["press", "down", "up", "click_left", "click_right", "delay"])
 
         self.key_edit = QLineEdit(self)
         self.time_edit = QLineEdit(self)
@@ -217,12 +237,15 @@ class StepDialog(QDialog):
         # Prefill
         if step:
             t = step.get("type", "press")
-            if t not in ["press", "down", "up", "delay"]:
+            if t not in ["press", "down", "up", "click_left", "click_right", "delay"]:
                 t = "press"
             self.type_combo.setCurrentText(t)
             if t == "delay":
                 self.time_edit.setText(str(step.get("time", 0.0)))
                 self.key_edit.setText("")
+            elif t in ["click_left", "click_right"]:
+                self.key_edit.setText("")
+                self.time_edit.setText("0")
             else:
                 self.key_edit.setText(str(step.get("key", "")))
                 self.time_edit.setText("0")
@@ -237,6 +260,8 @@ class StepDialog(QDialog):
                 QMessageBox.warning(self, "Invalid", "Delay time must be a number.")
                 return
             self._result_step = {"type": "delay", "time": secs}
+        elif t in ["click_left", "click_right"]:
+            self._result_step = {"type": t}
         else:
             key = self.key_edit.text().strip()
             if not key:
@@ -274,8 +299,12 @@ class MainWindow(QMainWindow):
         self.auto_switch_interval = AUTO_SWITCH_INTERVAL_DEFAULT
         self._auto_switch_inflight = False
         self._auto_switch_low_since = None
+        self._quitting = False
         self.auto_switch_timer = QTimer(self)
         self.auto_switch_timer.timeout.connect(self._auto_switch_tick)
+
+        # System tray
+        self._init_tray()
 
         # Wire signals from UI -> your methods
         self._connect_signals()
@@ -298,14 +327,71 @@ class MainWindow(QMainWindow):
         self.autoSwitchProfile.connect(self._apply_auto_profile)
         self.autoSwitchFallback.connect(self._apply_auto_switch_fallback)
 
+    def _init_tray(self):
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+
+        self.tray_icon = QSystemTrayIcon(self)
+        self.tray_icon.setIcon(QIcon("icon.ico"))
+
+        menu = QMenu(self)
+        action_show = QAction("Show", self)
+        action_hide = QAction("Hide", self)
+        action_quit = QAction("Exit", self)
+
+        action_show.triggered.connect(self._tray_show)
+        action_hide.triggered.connect(self._tray_hide)
+        action_quit.triggered.connect(self._tray_quit)
+
+        menu.addAction(action_show)
+        menu.addAction(action_hide)
+        menu.addSeparator()
+        menu.addAction(action_quit)
+
+        self.tray_icon.setContextMenu(menu)
+        self.tray_icon.activated.connect(self._on_tray_activated)
+        self.tray_icon.show()
+
+    def _on_tray_activated(self, reason):
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            if self.isVisible() and not self.isMinimized():
+                self._tray_hide()
+            else:
+                self._tray_show()
+
+    def _tray_show(self):
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _tray_hide(self):
+        self.hide()
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.Type.WindowStateChange:
+            if self.isMinimized() and hasattr(self, "tray_icon"):
+                QTimer.singleShot(0, self._tray_hide)
+        super().changeEvent(event)
+
+    def _tray_quit(self):
+        self._quitting = True
+        self.close()
+
     def _on_toggle_hotkey(self):
         QTimer.singleShot(0, self._toggle_running)
 
     def _toggle_running(self):
         if self.engine.running:
             self.on_stop()
+            default_profile = self.config.get("default_profile")
+            if default_profile and default_profile in self.config.get("profiles", {}):
+                self.refresh_profiles(select=default_profile)
+                self.comboProfile.setCurrentText(default_profile)
+                self.on_profile_changed(default_profile)
         else:
             self.on_start()
+            if self.auto_switch_enabled:
+                self._auto_switch_tick()
 
     def _set_auto_switch_active(self, active: bool):
         if active and self.auto_switch_enabled:
@@ -673,6 +759,14 @@ class MainWindow(QMainWindow):
 
         self.config["profiles"].pop(name, None)
 
+        # Remove stored image if present
+        try:
+            img_path = os.path.join(CONFIGS_DIR, f"{name}.png")
+            if os.path.exists(img_path):
+                os.remove(img_path)
+        except Exception as e:
+            QMessageBox.warning(self, "Image delete", f"Profile deleted, but image delete failed: {e}")
+
         # Fix default profile if needed
         if self.config.get("default_profile") == name:
             remaining = list(self.config["profiles"].keys())
@@ -864,6 +958,10 @@ class MainWindow(QMainWindow):
             if t == "delay":
                 val = float(s.get("time", 0.0) or 0.0)
                 self.listSteps.addItem(f"{i+1}. delay {val:.3f}s")
+            elif t == "click_left":
+                self.listSteps.addItem(f"{i+1}. click left")
+            elif t == "click_right":
+                self.listSteps.addItem(f"{i+1}. click right")
             else:
                 k = s.get("key", "?")
                 self.listSteps.addItem(f"{i+1}. {t} '{k}'")
@@ -956,6 +1054,10 @@ class MainWindow(QMainWindow):
     # ---------- Close ----------
 
     def closeEvent(self, event):
+        if hasattr(self, "tray_icon") and self.tray_icon.isVisible() and not self._quitting:
+            self.hide()
+            event.ignore()
+            return
         try:
             self.engine.stop()
         except Exception:
@@ -972,6 +1074,11 @@ class MainWindow(QMainWindow):
             self.overlay.close()
         except Exception:
             pass
+        try:
+            if hasattr(self, "tray_icon"):
+                self.tray_icon.hide()
+        except Exception:
+            pass
         event.accept()
 
 
@@ -986,7 +1093,7 @@ def main():
     app.setWindowIcon(QIcon("icon.ico"))
     win = MainWindow()
     win.setFixedSize(500, 650)
-    win.show()
+    win.showMinimized()
     app.exec()
 
 
