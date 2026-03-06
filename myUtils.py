@@ -6,6 +6,8 @@ import win32gui
 import mss
 import os
 from typing import Union
+import ctypes
+from ctypes import wintypes
 # FULL_CROP = (0.3883, 0.8754, 0.2282, 0.1246)
 SKILLA_CROP = (0.4075, 0.9445, 0.0156, 0.0406)
 TITLE="地下城与勇士：创新世纪"
@@ -169,3 +171,32 @@ def template_match_any(
     if return_score:
         return found, best_score
     return found
+
+
+
+def get_foreground_keyboard_layout():
+    """Get the keyboard layout of the foreground window.
+
+    Returns:
+        tuple: (lang_id, hkl) where lang_id is the language ID and hkl is the keyboard layout handle.
+        lang_id 0x409 corresponds to English, 0x804 corresponds to Chinese (Simplified)
+    """
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+
+    GetForegroundWindow = user32.GetForegroundWindow
+    GetWindowThreadProcessId = user32.GetWindowThreadProcessId
+    GetKeyboardLayout = user32.GetKeyboardLayout
+
+    GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    GetWindowThreadProcessId.restype = wintypes.DWORD
+
+    GetKeyboardLayout.argtypes = [wintypes.DWORD]
+    GetKeyboardLayout.restype = wintypes.HKL
+
+    hwnd = GetForegroundWindow()
+    pid = wintypes.DWORD()
+    tid = GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    hkl = GetKeyboardLayout(tid)
+    lang_id = hkl & 0xFFFF
+
+    return hex(lang_id), hex(hkl)

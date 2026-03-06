@@ -26,7 +26,7 @@
         },
         {
           "type": "delay",
-          "time": 0.001
+          "time": 0.3
         },
         {
           "type": "press",
@@ -34,23 +34,262 @@
         },
         {
           "type": "delay",
-          "time": 0.04
+          "time": 0.2
         },
         {
           "type": "press",
           "key": "space"
         }
-      ]
-    },
-    "\u54c8\u57fa\u7c73": {
-      "s": [
+      ],
+      "h": [
+        {
+          "type": "press",
+          "key": "v"
+        },
         {
           "type": "delay",
-          "time": 0.7
+          "time": 0.05
+        },
+        {
+          "type": "press",
+          "key": "g"
+        },
+        {
+          "type": "delay",
+          "time": 0.2
+        },
+        {
+          "type": "press",
+          "key": "a"
+        },
+        {
+          "type": "delay",
+          "time": 0.15
         },
         {
           "type": "press",
           "key": "shift"
+        }
+      ]
+    },
+    "\u54c8\u57fa\u7c73": {
+      "alt": [
+        {
+          "type": "delay",
+          "time": 0.05
+        },
+        {
+          "type": "press",
+          "key": "h"
+        }
+      ],
+      "s": [
+        {
+          "type": "press",
+          "key": "x"
+        },
+        {
+          "type": "delay",
+          "time": 0.01
+        },
+        {
+          "type": "press",
+          "key": "down"
+        },
+        {
+          "type": "delay",
+          "time": 0.01
+        },
+        {
+          "type": "press",
+          "key": "down"
+        },
+        {
+          "type": "press",
+          "key": "x"
+        }
+      ]
+    },
+    "\u7f14\u9020": {
+      "t": [
+        {
+          "type": "delay",
+          "time": 0.1
+        },
+        {
+          "type": "click_left"
+        },
+        {
+          "type": "delay",
+          "time": 0.01
+        },
+        {
+          "type": "click_left"
+        },
+        {
+          "type": "delay",
+          "time": 0.01
+        },
+        {
+          "type": "click_left"
+        },
+        {
+          "type": "delay",
+          "time": 0.01
+        },
+        {
+          "type": "click_left"
+        },
+        {
+          "type": "delay",
+          "time": 0.01
+        },
+        {
+          "type": "click_right"
+        }
+      ],
+      "r": [
+        {
+          "type": "press",
+          "key": "h"
+        },
+        {
+          "type": "delay",
+          "time": 0.07
+        },
+        {
+          "type": "press",
+          "key": "f"
+        },
+        {
+          "type": "delay",
+          "time": 0.18
+        },
+        {
+          "type": "click_left"
+        },
+        {
+          "type": "click_right"
+        },
+        {
+          "type": "click_left"
+        },
+        {
+          "type": "click_right"
+        },
+        {
+          "type": "click_left"
+        },
+        {
+          "type": "click_right"
+        },
+        {
+          "type": "click_left"
+        },
+        {
+          "type": "click_right"
+        },
+        {
+          "type": "click_left"
+        },
+        {
+          "type": "click_right"
+        }
+      ]
+    },
+    "\u5976\u67aa": {
+      "ctrl": [
+        {
+          "type": "delay",
+          "time": 0.05
+        },
+        {
+          "type": "press",
+          "key": "g"
+        },
+        {
+          "type": "press",
+          "key": "alt"
+        },
+        {
+          "type": "press",
+          "key": "h"
+        },
+        {
+          "type": "press",
+          "key": "y"
+        }
+      ]
+    },
+    "\u5203\u5f71": {
+      "g": [
+        {
+          "type": "delay",
+          "time": 0.01
+        },
+        {
+          "type": "press",
+          "key": "up"
+        },
+        {
+          "type": "press",
+          "key": "down"
+        },
+        {
+          "type": "delay",
+          "time": 0.02
+        },
+        {
+          "type": "press",
+          "key": "x"
+        },
+        {
+          "type": "delay",
+          "time": 0.05
+        },
+        {
+          "type": "press",
+          "key": "t"
+        }
+      ]
+    },
+    "\u9f99\u795e": {
+      "e": [
+        {
+          "type": "press",
+          "key": "c"
+        },
+        {
+          "type": "press",
+          "key": "up"
+        },
+        {
+          "type": "press",
+          "key": "down"
+        },
+        {
+          "type": "press",
+          "key": "x"
+        },
+        {
+          "type": "delay",
+          "time": 0.01
+        },
+        {
+          "type": "press",
+          "key": "up"
+        },
+        {
+          "type": "press",
+          "key": "down"
+        },
+        {
+          "type": "delay",
+          "time": 0.03
+        },
+        {
+          "type": "press",
+          "key": "x"
         }
       ]
     }

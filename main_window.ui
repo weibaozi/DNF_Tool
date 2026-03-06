@@ -232,6 +232,13 @@
        </widget>
       </item>
       <item>
+       <widget class="QPushButton" name="btnEditKey">
+        <property name="text">
+         <string>Edit Key</string>
+        </property>
+       </widget>
+      </item>
+      <item>
        <widget class="QPushButton" name="btnDeleteKey">
         <property name="text">
          <string>Delete Key</string>

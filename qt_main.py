@@ -11,7 +11,7 @@ from PyQt6 import uic
 pydirectinput.PAUSE = 0.001
 
 from overlay_status import OverlayConfig, OverlayStatus
-from myUtils import window_capture, template_match_any, TITLE, SKILLA_CROP, save_image
+from myUtils import window_capture, template_match_any, TITLE, SKILLA_CROP, save_image, get_foreground_keyboard_layout
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent
 from PyQt6.QtGui import QIcon, QAction
@@ -32,11 +32,9 @@ OVERLAY_Y = 30
 TOGGLE_HOTKEY = "f1"
 CONFIGS_DIR = "configs"
 AUTO_SWITCH_THRESHOLD = 0.8
-AUTO_SWITCH_INTERVAL_DEFAULT = 1.0
+AUTO_SWITCH_INTERVAL_DEFAULT = 0.5
 CAPTURE_CROP = SKILLA_CROP
 AUTO_SWITCH_CROP = SKILLA_CROP
-AUTO_SWITCH_LOW_SCORE_THRESHOLD = 0.45
-AUTO_SWITCH_LOW_SCORE_DURATION = 35.0
 CLICK_DELAY_DEFAULT = 0.01
 KEY_PRESS_DELAY_DEFAULT = 0.01
 
@@ -79,6 +77,8 @@ class MacroEngine:
             - {"type": "up",         "key": "..."}
             - {"type": "click_left"}
             - {"type": "click_right"}
+            - {"type": "mouse_down", "key": "left|right"}
+            - {"type": "mouse_up",   "key": "left|right"}
             - {"type": "delay",      "time": 0.3}
     """
     def __init__(self):
@@ -176,6 +176,10 @@ class MacroEngine:
                 pydirectinput.mouseDown(button='right')
                 time.sleep(CLICK_DELAY_DEFAULT)
                 pydirectinput.mouseUp(button='right')
+            elif t == "mouse_down":
+                pydirectinput.mouseDown(button=key)
+            elif t == "mouse_up":
+                pydirectinput.mouseUp(button=key)
             else:
                 print(f"Unknown step type: {t}")
 
@@ -185,6 +189,11 @@ class MacroEngine:
 
         if not is_target_window_focused():
             return
+
+        if os.name == "nt":
+            lang_id, _ = get_foreground_keyboard_layout()
+            if lang_id != "0x409":
+                return
 
         with self.lock:
             prof = self.profiles.get(self.active_profile, {})
@@ -202,7 +211,8 @@ class StepDialog(QDialog):
     """
     Create/Edit a step:
       - press/down/up -> key only
-      - delay -> time only
+            - mouse_down/mouse_up -> key only (left/right)
+            - delay -> time only
     """
     def __init__(self, parent=None, step=None):
         super().__init__(parent)
@@ -210,7 +220,7 @@ class StepDialog(QDialog):
         self._result_step = None
 
         self.type_combo = QComboBox(self)
-        self.type_combo.addItems(["press", "down", "up", "click_left", "click_right", "delay"])
+        self.type_combo.addItems(["press", "down", "up", "click_left", "click_right", "mouse_down", "mouse_up", "delay"])
 
         self.key_edit = QLineEdit(self)
         self.time_edit = QLineEdit(self)
@@ -219,7 +229,7 @@ class StepDialog(QDialog):
         layout.addWidget(QLabel("Type:"), 0, 0)
         layout.addWidget(self.type_combo, 0, 1)
 
-        layout.addWidget(QLabel("Key (press/down/up):"), 1, 0)
+        layout.addWidget(QLabel("Key (press/down/up/mouse_down/mouse_up):"), 1, 0)
         layout.addWidget(self.key_edit, 1, 1)
 
         layout.addWidget(QLabel("Time seconds (delay):"), 2, 0)
@@ -237,7 +247,7 @@ class StepDialog(QDialog):
         # Prefill
         if step:
             t = step.get("type", "press")
-            if t not in ["press", "down", "up", "click_left", "click_right", "delay"]:
+            if t not in ["press", "down", "up", "click_left", "click_right", "mouse_down", "mouse_up", "delay"]:
                 t = "press"
             self.type_combo.setCurrentText(t)
             if t == "delay":
@@ -265,7 +275,10 @@ class StepDialog(QDialog):
         else:
             key = self.key_edit.text().strip()
             if not key:
-                QMessageBox.warning(self, "Invalid", "Key is required for press/down/up.")
+                QMessageBox.warning(self, "Invalid", "Key is required for press/down/up/mouse_down/mouse_up.")
+                return
+            if t in ["mouse_down", "mouse_up"] and key not in ["left", "right"]:
+                QMessageBox.warning(self, "Invalid", "Mouse button must be left or right.")
                 return
             self._result_step = {"type": t, "key": key}
 
@@ -279,7 +292,6 @@ class StepDialog(QDialog):
 
 class MainWindow(QMainWindow):
     autoSwitchProfile = pyqtSignal(str)
-    autoSwitchFallback = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -298,7 +310,6 @@ class MainWindow(QMainWindow):
         self.auto_switch_enabled = True
         self.auto_switch_interval = AUTO_SWITCH_INTERVAL_DEFAULT
         self._auto_switch_inflight = False
-        self._auto_switch_low_since = None
         self._quitting = False
         self.auto_switch_timer = QTimer(self)
         self.auto_switch_timer.timeout.connect(self._auto_switch_tick)
@@ -310,6 +321,7 @@ class MainWindow(QMainWindow):
         self._connect_signals()
 
         # Load data into UI
+        self._bootstrap_storage()
         self.load_from_disk(select_default=True)
         self._update_status()
         self._update_overlay()
@@ -325,7 +337,8 @@ class MainWindow(QMainWindow):
         self.timer.start(400)
 
         self.autoSwitchProfile.connect(self._apply_auto_profile)
-        self.autoSwitchFallback.connect(self._apply_auto_switch_fallback)
+
+        QTimer.singleShot(0, self._auto_start_if_possible)
 
     def _init_tray(self):
         if not QSystemTrayIcon.isSystemTrayAvailable():
@@ -393,6 +406,15 @@ class MainWindow(QMainWindow):
             if self.auto_switch_enabled:
                 self._auto_switch_tick()
 
+    def _auto_start_if_possible(self):
+        if self.engine.running:
+            return
+        if not self.config.get("profiles"):
+            return
+        self.on_start()
+        if self.auto_switch_enabled:
+            self._auto_switch_tick()
+
     def _set_auto_switch_active(self, active: bool):
         if active and self.auto_switch_enabled:
             self.auto_switch_timer.start(int(self.auto_switch_interval * 1000))
@@ -417,6 +439,7 @@ class MainWindow(QMainWindow):
         # Key controls
         self.comboKey.currentTextChanged.connect(self.on_key_changed)
         self.btnAddKey.clicked.connect(self.add_key)
+        self.btnEditKey.clicked.connect(self.edit_key)
         self.btnDeleteKey.clicked.connect(self.delete_key)
 
         # Steps controls
@@ -432,20 +455,33 @@ class MainWindow(QMainWindow):
         self.editAutoSwitchInterval.editingFinished.connect(self.on_auto_switch_interval_changed)
     # ---------- Config IO ----------
 
+    def _bootstrap_storage(self):
+        self._ensure_configs_dir()
+        if not os.path.exists(CONFIG_PATH) or os.path.getsize(CONFIG_PATH) == 0:
+            self._write_default_config()
+
+    def _write_default_config(self):
+        self.config = {"default_profile": None, "profiles": {}}
+        try:
+            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+                json.dump(self.config, f, indent=2)
+        except Exception as e:
+            QMessageBox.warning(self, "Init warning", f"Could not initialize config file: {e}")
+
     def load_from_disk(self, select_default=False):
         try:
             if os.path.exists(CONFIG_PATH):
                 with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                     self.config = json.load(f)
             else:
-                self.config = {"default_profile": None, "profiles": {}}
+                self._write_default_config()
 
             if "profiles" not in self.config or not isinstance(self.config["profiles"], dict):
                 self.config["profiles"] = {}
 
         except Exception as e:
             QMessageBox.critical(self, "Load error", str(e))
-            self.config = {"default_profile": None, "profiles": {}}
+            self._write_default_config()
 
         profiles = list(self.config["profiles"].keys())
         self.comboProfile.blockSignals(True)
@@ -538,7 +574,6 @@ class MainWindow(QMainWindow):
             self.auto_switch_timer.start(int(self.auto_switch_interval * 1000))
         else:
             self.auto_switch_timer.stop()
-            self._auto_switch_low_since = None
 
     def on_auto_switch_interval_changed(self):
         text = self.editAutoSwitchInterval.text().strip()
@@ -600,25 +635,6 @@ class MainWindow(QMainWindow):
                     best_profile = profile_name
                     # print(f"Auto-switch: matched profile '{profile_name}' with score {score:.3f}")
 
-            # Low-score fallback check for current profile
-            current_profile = self.selected_profile or self.config.get("default_profile")
-            if current_profile:
-                current_img = os.path.join(CONFIGS_DIR, f"{current_profile}.png")
-                if os.path.exists(current_img):
-                    found_current, score_current = template_match_any(
-                        current_img,
-                        scene,
-                        threshold=AUTO_SWITCH_LOW_SCORE_THRESHOLD,
-                        return_score=True,
-                    )
-                    now = time.monotonic()
-                    if found_current:
-                        self._auto_switch_low_since = None
-                    else:
-                        if self._auto_switch_low_since is None:
-                            self._auto_switch_low_since = now
-                        elif now - self._auto_switch_low_since >= AUTO_SWITCH_LOW_SCORE_DURATION:
-                            self.autoSwitchFallback.emit()
 
             if best_profile and best_profile != self.selected_profile:
                 self.autoSwitchProfile.emit(best_profile)
@@ -631,14 +647,6 @@ class MainWindow(QMainWindow):
         self.refresh_profiles(select=profile_name)
         self.comboProfile.setCurrentText(profile_name)
         self.on_profile_changed(profile_name)
-
-    def _apply_auto_switch_fallback(self):
-        default_profile = self.config.get("default_profile")
-        if default_profile and default_profile in self.config.get("profiles", {}):
-            self.refresh_profiles(select=default_profile)
-            self.comboProfile.setCurrentText(default_profile)
-            self.on_profile_changed(default_profile)
-        self._auto_switch_low_since = None
 
     # ---------- Engine controls ----------
 
@@ -934,6 +942,40 @@ class MainWindow(QMainWindow):
         self.config["profiles"][self.selected_profile].pop(self.selected_key, None)
         self.selected_key = None
         self.refresh_keys()
+        self.refresh_steps()
+
+        if self.engine.running:
+            self.engine.reload(self.config["profiles"], self.selected_profile)
+        self._update_status()
+
+    def edit_key(self):
+        if not self.selected_profile or not self.selected_key:
+            QMessageBox.warning(self, "No selection", "Select a profile and key first.")
+            return
+
+        new_key, ok = QInputDialog.getText(
+            self,
+            "Edit Key",
+            f"New trigger key (current: '{self.selected_key}'):",
+            text=self.selected_key
+        )
+        if not ok or not new_key.strip():
+            return
+        new_key = new_key.strip()
+
+        if new_key == self.selected_key:
+            return  # No change
+
+        prof = self.config["profiles"][self.selected_profile]
+        if new_key in prof:
+            QMessageBox.warning(self, "Exists", f"Key '{new_key}' already exists in this profile.")
+            return
+
+        # Rename the key by copying steps and deleting the old one
+        prof[new_key] = prof.pop(self.selected_key)
+        self.selected_key = new_key
+        self.refresh_keys()
+        self.comboKey.setCurrentText(new_key)
         self.refresh_steps()
 
         if self.engine.running:
