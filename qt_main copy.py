@@ -11,7 +11,7 @@ from PyQt6 import uic
 pydirectinput.PAUSE = 0.001
 
 from overlay_status import OverlayConfig, OverlayStatus
-from myUtils import window_capture, template_match_any, TITLE, SKILLA_CROP, CHAT_CROP, save_image, get_foreground_keyboard_layout
+from myUtils import window_capture, template_match_any, TITLE, SKILLA_CROP, save_image, get_foreground_keyboard_layout
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent
 from PyQt6.QtGui import QIcon, QAction
@@ -31,17 +31,15 @@ OVERLAY_X = 3470
 OVERLAY_Y = 30
 TOGGLE_HOTKEY = "f1"
 CONFIGS_DIR = "configs"
-AUTO_SWITCH_THRESHOLD = 0.85
-AUTO_SWITCH_CURRENT_PROFILE_MIN_SCORE = 0.6
-AUTO_SWITCH_INTERVAL_DEFAULT = 0.25
-CHAT_DISABLE_THRESHOLD = 0.8
+AUTO_SWITCH_THRESHOLD = 0.8
+AUTO_SWITCH_INTERVAL_DEFAULT = 0.5
 CAPTURE_CROP = SKILLA_CROP
 AUTO_SWITCH_CROP = SKILLA_CROP
-CHAT_IMAGE_PATH = os.path.join("img", "chat.png")
 CLICK_DELAY_DEFAULT = 0.01
 KEY_PRESS_DELAY_DEFAULT = 0.01
 MACRO_COOLDOWN_EXTRA = 0.01
 AUTO_REPLAY_WHILE_HELD = False
+DEBUG_LOG_KEYS = True
 
 
 # ----------------- Window detection (Windows) -----------------
@@ -50,6 +48,15 @@ if os.name == "nt":
     import ctypes
     user32 = ctypes.windll.user32
     import winsound
+    MapVirtualKeyW = user32.MapVirtualKeyW
+    GetAsyncKeyState = user32.GetAsyncKeyState
+    VkKeyScanW = user32.VkKeyScanW
+    MapVirtualKeyW.argtypes = [ctypes.c_uint, ctypes.c_uint]
+    MapVirtualKeyW.restype = ctypes.c_uint
+    GetAsyncKeyState.argtypes = [ctypes.c_int]
+    GetAsyncKeyState.restype = ctypes.c_short
+    VkKeyScanW.argtypes = [ctypes.c_wchar]
+    VkKeyScanW.restype = ctypes.c_short
 
     def get_active_window_title() -> str:
         hwnd = user32.GetForegroundWindow()
@@ -63,12 +70,33 @@ if os.name == "nt":
         title = get_active_window_title()
         return any(x in title for x in DNF_WINDOW_IDENTIFIERS)
 
+    def is_key_pressed_fast(key_name: str) -> bool:
+        if not key_name:
+            return False
+        try:
+            scan_codes = keyboard.key_to_scan_codes(key_name)
+        except Exception:
+            return False
+        for sc in scan_codes:
+            for map_type in (1, 3):
+                vk = MapVirtualKeyW(sc, map_type)
+                if vk and (GetAsyncKeyState(vk) & 0x8000):
+                    return True
+        if len(key_name) == 1:
+            vk = VkKeyScanW(key_name) & 0xFF
+            if vk and (GetAsyncKeyState(vk) & 0x8000):
+                return True
+        return False
+
 else:
     def get_active_window_title() -> str:
         return ""
 
     def is_target_window_focused() -> bool:
         return True
+
+    def is_key_pressed_fast(key_name: str) -> bool:
+        return keyboard.is_pressed(key_name)
 
 
 # ----------------- Macro Engine -----------------
@@ -98,44 +126,7 @@ class MacroEngine:
         self.loop_stop_events = {}
         self.on_toggle_loop_start = None
         self.on_toggle_loop_stop = None
-        self.is_macro_temporarily_blocked = None
-
-    def get_active_toggle_keys(self) -> list[str]:
-        with self.lock:
-            return list(self.loop_stop_events.keys())
-
-    @staticmethod
-    def _normalize_key_config(raw):
-        if isinstance(raw, list):
-            return {
-                "steps": raw,
-                "repeat": 1,
-                "loop_mode": "off",
-                "auto_toggle_on_profile_switch": False,
-            }
-        if isinstance(raw, dict):
-            steps_val = raw.get("steps", [])
-            if not isinstance(steps_val, list):
-                steps_val = []
-            loop_mode = raw.get("loop_mode", "off")
-            if loop_mode not in ["off", "toggle", "hold"]:
-                loop_mode = "off"
-            try:
-                repeat = int(raw.get("repeat", 1))
-            except (TypeError, ValueError):
-                repeat = 1
-            return {
-                "steps": steps_val,
-                "repeat": max(1, repeat),
-                "loop_mode": loop_mode,
-                "auto_toggle_on_profile_switch": bool(raw.get("auto_toggle_on_profile_switch", False)),
-            }
-        return {
-            "steps": [],
-            "repeat": 1,
-            "loop_mode": "off",
-            "auto_toggle_on_profile_switch": False,
-        }
+        self.injecting_key_counts = {}
 
     def _unhook_all_unlocked(self):
         for hook in self.profile_hooks.values():
@@ -145,43 +136,23 @@ class MacroEngine:
             stop_event.set()
         self.loop_stop_events.clear()
         self.running_triggers.clear()
+        self.injecting_key_counts.clear()
         self.running = False
 
-    def _start_toggle_loop(self, trigger_key: str, steps: list, play_sound: bool = True):
-        with self.lock:
-            if trigger_key in self.loop_stop_events:
-                return False
-            stop_event = threading.Event()
-            self.loop_stop_events[trigger_key] = stop_event
-            self.running_triggers.add(trigger_key)
-
-        if play_sound and self.on_toggle_loop_start:
-            try:
-                self.on_toggle_loop_start(trigger_key)
-            except Exception:
-                pass
-
-        threading.Thread(
-            target=self._run_steps_loop,
-            args=(trigger_key, steps, stop_event),
-            daemon=True
-        ).start()
-        return True
-
-    def _auto_activate_profile_toggles_unlocked(self):
-        if not self.active_profile or self.active_profile not in self.profiles:
+    def _set_injecting(self, key: str, active: bool):
+        if not key:
             return
-        profile_data = self.profiles.get(self.active_profile, {})
-        for trigger_key, raw in profile_data.items():
-            key_cfg = self._normalize_key_config(raw)
-            if key_cfg.get("loop_mode") != "toggle":
-                continue
-            if not key_cfg.get("auto_toggle_on_profile_switch"):
-                continue
-            steps = key_cfg.get("steps") or []
-            if not steps:
-                continue
-            self._start_toggle_loop(trigger_key, steps, play_sound=False)
+        if active:
+            self.injecting_key_counts[key] = self.injecting_key_counts.get(key, 0) + 1
+            return
+        count = self.injecting_key_counts.get(key, 0) - 1
+        if count > 0:
+            self.injecting_key_counts[key] = count
+        else:
+            self.injecting_key_counts.pop(key, None)
+
+    def _is_injecting_key(self, key: str) -> bool:
+        return bool(key) and self.injecting_key_counts.get(key, 0) > 0
 
     def stop(self):
         with self.lock:
@@ -211,7 +182,6 @@ class MacroEngine:
                 self.profile_hooks[trigger_key] = hook
 
             self.running = True
-            self._auto_activate_profile_toggles_unlocked()
 
     def reload(self, profiles: dict, active_profile: str):
         with self.lock:
@@ -249,13 +219,25 @@ class MacroEngine:
                 continue
 
             if t == "press":
-                pydirectinput.keyDown(key)
-                time.sleep(KEY_PRESS_DELAY_DEFAULT)
-                pydirectinput.keyUp(key)
+                self._set_injecting(key, True)
+                try:
+                    pydirectinput.keyDown(key)
+                    time.sleep(KEY_PRESS_DELAY_DEFAULT)
+                    pydirectinput.keyUp(key)
+                finally:
+                    self._set_injecting(key, False)
             elif t == "down":
-                pydirectinput.keyDown(key)
+                self._set_injecting(key, True)
+                try:
+                    pydirectinput.keyDown(key)
+                finally:
+                    self._set_injecting(key, False)
             elif t == "up":
-                pydirectinput.keyUp(key)
+                self._set_injecting(key, True)
+                try:
+                    pydirectinput.keyUp(key)
+                finally:
+                    self._set_injecting(key, False)
             elif t == "click_left":
                 pydirectinput.mouseDown(button='left')
                 # print("click left down")
@@ -283,7 +265,8 @@ class MacroEngine:
 
                 if not AUTO_REPLAY_WHILE_HELD:
                     break
-                if not keyboard.is_pressed(trigger_key):
+                if not is_key_pressed_fast(trigger_key):
+                    print(f"Trigger key '{trigger_key}' no longer physically pressed, stopping auto-replay.")
                     print(f"Trigger key '{trigger_key}' released, stopping auto-replay.")
                     break
         finally:
@@ -293,13 +276,15 @@ class MacroEngine:
                 self.macro_cooldowns[macro_id] = end_time + MACRO_COOLDOWN_EXTRA
                 self.running_triggers.discard(trigger_key)
 
-    def _run_steps_loop(self, trigger_key: str, steps: list, stop_event: threading.Event):
+    def _run_steps_loop(self, trigger_key: str, steps: list, stop_event: threading.Event, stop_on_release: bool = False):
         try:
             while not stop_event.is_set():
+                if stop_on_release and not is_key_pressed_fast(trigger_key):
+                    if DEBUG_LOG_KEYS:
+                        print(f"[key] release-detected name={trigger_key} time={time.monotonic():.3f}")
+                    stop_event.set()
+                    break
                 if not is_target_window_focused():
-                    time.sleep(0.01)
-                    continue
-                if self.is_macro_temporarily_blocked and self.is_macro_temporarily_blocked():
                     time.sleep(0.01)
                     continue
                 self._run_steps_once(steps)
@@ -308,10 +293,17 @@ class MacroEngine:
                 self.running_triggers.discard(trigger_key)
 
     def _on_key(self, event, trigger_key: str):
+        key_name = getattr(event, "name", None)
+        if key_name and self._is_injecting_key(key_name):
+            return
+        if key_name and DEBUG_LOG_KEYS and event.event_type in {"down", "up"}:
+            print(
+                f"[key] {event.event_type} name={key_name} scan={getattr(event, 'scan_code', None)} "
+                f"time={time.monotonic():.3f}"
+            )
+
         if event.event_type == "down":
             if not is_target_window_focused():
-                return
-            if self.is_macro_temporarily_blocked and self.is_macro_temporarily_blocked():
                 return
 
             if os.name == "nt":
@@ -322,7 +314,22 @@ class MacroEngine:
         with self.lock:
             prof = self.profiles.get(self.active_profile, {})
             raw = prof.get(trigger_key)
-            key_cfg = self._normalize_key_config(raw)
+            if isinstance(raw, list):
+                key_cfg = {"steps": raw, "repeat": 1, "loop_mode": "off"}
+            elif isinstance(raw, dict):
+                steps_val = raw.get("steps", [])
+                if not isinstance(steps_val, list):
+                    steps_val = []
+                loop_mode = raw.get("loop_mode", "off")
+                if loop_mode not in ["off", "toggle", "hold"]:
+                    loop_mode = "off"
+                try:
+                    repeat = int(raw.get("repeat", 1))
+                except (TypeError, ValueError):
+                    repeat = 1
+                key_cfg = {"steps": steps_val, "repeat": max(1, repeat), "loop_mode": loop_mode}
+            else:
+                key_cfg = {"steps": [], "repeat": 1, "loop_mode": "off"}
 
             steps = key_cfg.get("steps") or []
             loop_mode = key_cfg.get("loop_mode", "off")
@@ -340,11 +347,26 @@ class MacroEngine:
                     self.loop_stop_events.pop(trigger_key, None)
                     if self.on_toggle_loop_stop:
                         try:
-                            self.on_toggle_loop_stop(trigger_key)
+                            self.on_toggle_loop_stop()
                         except Exception:
                             pass
                     return
-            self._start_toggle_loop(trigger_key, steps)
+
+                stop_event = threading.Event()
+                self.loop_stop_events[trigger_key] = stop_event
+                self.running_triggers.add(trigger_key)
+
+            if self.on_toggle_loop_start:
+                try:
+                    self.on_toggle_loop_start()
+                except Exception:
+                    pass
+
+            threading.Thread(
+                target=self._run_steps_loop,
+                args=(trigger_key, steps, stop_event, False),
+                daemon=True
+            ).start()
             return
 
         if loop_mode == "hold":
@@ -358,7 +380,7 @@ class MacroEngine:
 
                 threading.Thread(
                     target=self._run_steps_loop,
-                    args=(trigger_key, steps, stop_event),
+                    args=(trigger_key, steps, stop_event, True),
                     daemon=True
                 ).start()
                 return
@@ -486,9 +508,8 @@ class MainWindow(QMainWindow):
 
         # your existing logic init
         self.engine = MacroEngine()
-        self.engine.on_toggle_loop_start = self._on_toggle_loop_started
-        self.engine.on_toggle_loop_stop = self._on_toggle_loop_stopped
-        self.engine.is_macro_temporarily_blocked = self._is_macro_temporarily_blocked
+        self.engine.on_toggle_loop_start = self._play_toggle_on_sound
+        self.engine.on_toggle_loop_stop = self._play_toggle_off_sound
         self.config = {"default_profile": None, "profiles": {}}
         self.selected_profile = None
         self.selected_key = None
@@ -497,8 +518,6 @@ class MainWindow(QMainWindow):
         self.auto_switch_enabled = True
         self.auto_switch_interval = AUTO_SWITCH_INTERVAL_DEFAULT
         self._auto_switch_inflight = False
-        self.chat_macro_blocked = False
-        self.chat_macro_score = -1.0
         self._quitting = False
         self.auto_switch_timer = QTimer(self)
         self.auto_switch_timer.timeout.connect(self._auto_switch_tick)
@@ -595,14 +614,6 @@ class MainWindow(QMainWindow):
             if self.auto_switch_enabled:
                 self._auto_switch_tick()
 
-    def _on_toggle_loop_started(self, trigger_key: str | None = None):
-        self._play_toggle_on_sound()
-        self._update_overlay()
-
-    def _on_toggle_loop_stopped(self, trigger_key: str | None = None):
-        self._play_toggle_off_sound()
-        self._update_overlay()
-
     def _play_toggle_on_sound(self):
         if os.name != "nt":
             return
@@ -668,7 +679,6 @@ class MainWindow(QMainWindow):
 
         # Loop controls
         self.comboLoopMode.currentTextChanged.connect(self.on_loop_mode_changed)
-        self.chkAutoToggleOnProfileSwitch.toggled.connect(self.on_auto_toggle_on_profile_switch_changed)
         self.spinRepeat.valueChanged.connect(self.on_repeat_changed)
 
         # Auto profile switch
@@ -706,7 +716,26 @@ class MainWindow(QMainWindow):
                 if not isinstance(prof_data, dict):
                     continue
                 for key_name, val in list(prof_data.items()):
-                    prof_data[key_name] = MacroEngine._normalize_key_config(val)
+                    if isinstance(val, list):
+                        prof_data[key_name] = {"steps": val, "repeat": 1, "loop_mode": "off"}
+                    elif isinstance(val, dict):
+                        steps_val = val.get("steps", [])
+                        if not isinstance(steps_val, list):
+                            steps_val = []
+                        try:
+                            repeat = int(val.get("repeat", 1))
+                        except (TypeError, ValueError):
+                            repeat = 1
+                        loop_mode = val.get("loop_mode", "off")
+                        if loop_mode not in ["off", "toggle", "hold"]:
+                            loop_mode = "off"
+                        prof_data[key_name] = {
+                            "steps": steps_val,
+                            "repeat": max(1, repeat),
+                            "loop_mode": loop_mode,
+                        }
+                    else:
+                        prof_data[key_name] = {"steps": [], "repeat": 1, "loop_mode": "off"}
 
         except Exception as e:
             QMessageBox.critical(self, "Load error", str(e))
@@ -756,38 +785,24 @@ class MainWindow(QMainWindow):
         self.lblDefault.setText(f"Default: {d if d else '(none)'}")
 
     def _update_status(self):
-        if self.engine.running:
-            suffix = " (chat blocked)" if self.chat_macro_blocked else ""
-            self.lblStatus.setText(f"Status: running{suffix}")
-        else:
-            self.lblStatus.setText("Status: stopped")
+        self.lblStatus.setText("Status: running" if self.engine.running else "Status: stopped")
         self._update_overlay()
 
     def _update_overlay(self):
         status = "ON" if self.engine.running else "OFF"
         profile = self.selected_profile or self.config.get("default_profile") or "(none)"
-        toggled_keys = self.engine.get_active_toggle_keys() if self.engine.running else []
-        lines = [f"Macro: {status}", f"Profile: {profile}"]
-        if toggled_keys:
-            lines.append(f"Toggled: {', '.join(toggled_keys)}")
-        self.overlay.update_text("\n".join(lines))
+        self.overlay.update_text(f"Macro: {status}\nProfile: {profile}")
 
     def _tick_status(self):
         # show focused title + gate state
         if os.name == "nt":
             title = get_active_window_title()
             ok = is_target_window_focused()
-            chat_gate = "OFF" if self.chat_macro_blocked else "ON"
             self.lblFocusGate.setText(
-                f"Focus gate ({'ON' if ok else 'OFF'}) | Chat gate ({chat_gate}): "
-                + ", ".join(DNF_WINDOW_IDENTIFIERS)
-                + f" | Active: {title}"
+                f"Focus gate ({'ON' if ok else 'OFF'}): " + ", ".join(DNF_WINDOW_IDENTIFIERS) + f" | Active: {title}"
             )
         else:
             self.lblFocusGate.setText("Focus gate: (Windows only)")
-
-    def _is_macro_temporarily_blocked(self) -> bool:
-        return bool(self.chat_macro_blocked)
 
     # ---------- Auto profile switch ----------
 
@@ -846,15 +861,12 @@ class MainWindow(QMainWindow):
 
     def _auto_switch_worker(self):
         try:
-            self._update_chat_gate_from_screen()
             scene = window_capture(TITLE, crop=AUTO_SWITCH_CROP, bgr=True)
             if scene is None:
                 return
 
-            default_profile = self.config.get("default_profile")
             best_profile = None
             best_score = -1.0
-            current_profile_score = -1.0
 
             if not os.path.isdir(CONFIGS_DIR):
                 return
@@ -876,48 +888,16 @@ class MainWindow(QMainWindow):
                     return_score=True,
                 )
                 # print(f"Auto-switch: checking profile '{profile_name}' -> found={found}, score={score:.3f}")
-                if profile_name == self.selected_profile:
-                    current_profile_score = score
                 if found and score > best_score:
                     best_score = score
                     best_profile = profile_name
                     # print(f"Auto-switch: matched profile '{profile_name}' with score {score:.3f}")
 
 
-            if (
-                best_profile
-                and best_profile != self.selected_profile
-                and (
-                    self.selected_profile == default_profile
-                    or current_profile_score < AUTO_SWITCH_CURRENT_PROFILE_MIN_SCORE
-                )
-            ):
-                # print(
-                #     f"Auto-switch: switching to profile '{best_profile}' with score {best_score:.3f} "
-                #     f"(current '{self.selected_profile}' score={current_profile_score:.3f})"
-                # )
+            if best_profile and best_profile != self.selected_profile:
                 self.autoSwitchProfile.emit(best_profile)
         finally:
             self._auto_switch_inflight = False
-
-    def _update_chat_gate_from_screen(self):
-        chat_scene = window_capture(TITLE, crop=CHAT_CROP, bgr=True)
-        if chat_scene is None:
-            return
-
-        if not os.path.exists(CHAT_IMAGE_PATH):
-            self.chat_macro_blocked = False
-            self.chat_macro_score = -1.0
-            return
-
-        found, score = template_match_any(
-            CHAT_IMAGE_PATH,
-            chat_scene,
-            threshold=CHAT_DISABLE_THRESHOLD,
-            return_score=True,
-        )
-        self.chat_macro_score = score
-        self.chat_macro_blocked = bool(found and score >= CHAT_DISABLE_THRESHOLD)
 
     def _apply_auto_profile(self, profile_name: str):
         if profile_name not in self.config.get("profiles", {}):
@@ -1208,7 +1188,6 @@ class MainWindow(QMainWindow):
             "steps": [],
             "repeat": self.spinRepeat.value(),
             "loop_mode": self.comboLoopMode.currentText().strip() or "off",
-            "auto_toggle_on_profile_switch": self.chkAutoToggleOnProfileSwitch.isChecked(),
         }
         self.selected_key = key_name
         self.refresh_keys()
@@ -1253,29 +1232,15 @@ class MainWindow(QMainWindow):
         new_key = new_key.strip()
 
         prof = self.config["profiles"][self.selected_profile]
-        current_cfg = prof.get(
-            self.selected_key,
-            {"steps": [], "repeat": 1, "loop_mode": "off", "auto_toggle_on_profile_switch": False}
-        )
+        current_cfg = prof.get(self.selected_key, {"steps": [], "repeat": 1, "loop_mode": "off"})
         if isinstance(current_cfg, list):
-            current_cfg = {
-                "steps": current_cfg,
-                "repeat": 1,
-                "loop_mode": "off",
-                "auto_toggle_on_profile_switch": False,
-            }
+            current_cfg = {"steps": current_cfg, "repeat": 1, "loop_mode": "off"}
         elif not isinstance(current_cfg, dict):
-            current_cfg = {
-                "steps": [],
-                "repeat": 1,
-                "loop_mode": "off",
-                "auto_toggle_on_profile_switch": False,
-            }
+            current_cfg = {"steps": [], "repeat": 1, "loop_mode": "off"}
 
         if new_key == self.selected_key:
             current_cfg["repeat"] = self.spinRepeat.value()
             current_cfg["loop_mode"] = self.comboLoopMode.currentText().strip() or "off"
-            current_cfg["auto_toggle_on_profile_switch"] = self.chkAutoToggleOnProfileSwitch.isChecked()
             prof[self.selected_key] = current_cfg
             self.refresh_steps()
             if self.engine.running:
@@ -1289,7 +1254,6 @@ class MainWindow(QMainWindow):
         # Rename the key by copying steps and deleting the old one
         current_cfg["repeat"] = self.spinRepeat.value()
         current_cfg["loop_mode"] = self.comboLoopMode.currentText().strip() or "off"
-        current_cfg["auto_toggle_on_profile_switch"] = self.chkAutoToggleOnProfileSwitch.isChecked()
         prof[new_key] = current_cfg
         prof.pop(self.selected_key, None)
         self.selected_key = new_key
@@ -1309,10 +1273,10 @@ class MainWindow(QMainWindow):
         prof = self.config["profiles"].setdefault(self.selected_profile, {})
         val = prof.get(self.selected_key)
         if isinstance(val, list):
-            val = {"steps": val, "repeat": 1, "loop_mode": "off", "auto_toggle_on_profile_switch": False}
+            val = {"steps": val, "repeat": 1, "loop_mode": "off"}
             prof[self.selected_key] = val
         elif not isinstance(val, dict):
-            val = {"steps": [], "repeat": 1, "loop_mode": "off", "auto_toggle_on_profile_switch": False}
+            val = {"steps": [], "repeat": 1, "loop_mode": "off"}
             prof[self.selected_key] = val
         steps = val.get("steps")
         if not isinstance(steps, list):
@@ -1326,10 +1290,10 @@ class MainWindow(QMainWindow):
         prof = self.config["profiles"].setdefault(self.selected_profile, {})
         val = prof.get(self.selected_key)
         if isinstance(val, list):
-            val = {"steps": val, "repeat": 1, "loop_mode": "off", "auto_toggle_on_profile_switch": False}
+            val = {"steps": val, "repeat": 1, "loop_mode": "off"}
             prof[self.selected_key] = val
         elif not isinstance(val, dict):
-            val = {"steps": [], "repeat": 1, "loop_mode": "off", "auto_toggle_on_profile_switch": False}
+            val = {"steps": [], "repeat": 1, "loop_mode": "off"}
             prof[self.selected_key] = val
         if "steps" not in val or not isinstance(val["steps"], list):
             val["steps"] = []
@@ -1337,34 +1301,26 @@ class MainWindow(QMainWindow):
             val["repeat"] = 1
         if val.get("loop_mode") not in ["off", "toggle", "hold"]:
             val["loop_mode"] = "off"
-        val["auto_toggle_on_profile_switch"] = bool(val.get("auto_toggle_on_profile_switch", False))
         return val
 
     def _update_loop_controls(self):
         cfg = self._get_selected_key_cfg()
         has_key = cfg is not None
-        loop_mode = cfg.get("loop_mode", "off") if has_key else "off"
-        allow_auto_toggle = has_key and loop_mode == "toggle"
 
         self.comboLoopMode.blockSignals(True)
-        self.chkAutoToggleOnProfileSwitch.blockSignals(True)
         self.spinRepeat.blockSignals(True)
 
         if not has_key:
             self.comboLoopMode.setCurrentText("off")
-            self.chkAutoToggleOnProfileSwitch.setChecked(False)
             self.spinRepeat.setValue(1)
         else:
-            self.comboLoopMode.setCurrentText(loop_mode)
-            self.chkAutoToggleOnProfileSwitch.setChecked(bool(cfg.get("auto_toggle_on_profile_switch", False)))
+            self.comboLoopMode.setCurrentText(cfg.get("loop_mode", "off"))
             self.spinRepeat.setValue(int(cfg.get("repeat", 1) or 1))
 
         self.comboLoopMode.setEnabled(has_key)
-        self.chkAutoToggleOnProfileSwitch.setEnabled(allow_auto_toggle)
         self.spinRepeat.setEnabled(has_key)
 
         self.comboLoopMode.blockSignals(False)
-        self.chkAutoToggleOnProfileSwitch.blockSignals(False)
         self.spinRepeat.blockSignals(False)
 
     def on_loop_mode_changed(self, mode: str):
@@ -1375,21 +1331,6 @@ class MainWindow(QMainWindow):
         if mode not in ["off", "toggle", "hold"]:
             mode = "off"
         cfg["loop_mode"] = mode
-        if mode != "toggle":
-            cfg["auto_toggle_on_profile_switch"] = False
-        if self.engine.running:
-            self.engine.reload(self.config["profiles"], self.selected_profile)
-        self._update_loop_controls()
-
-    def on_auto_toggle_on_profile_switch_changed(self, checked: bool):
-        cfg = self._get_selected_key_cfg()
-        if not cfg:
-            return
-        if cfg.get("loop_mode") != "toggle":
-            cfg["auto_toggle_on_profile_switch"] = False
-            self._update_loop_controls()
-            return
-        cfg["auto_toggle_on_profile_switch"] = bool(checked)
         if self.engine.running:
             self.engine.reload(self.config["profiles"], self.selected_profile)
 

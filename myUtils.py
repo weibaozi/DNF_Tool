@@ -9,7 +9,8 @@ from typing import Union
 import ctypes
 from ctypes import wintypes
 # FULL_CROP = (0.3883, 0.8754, 0.2282, 0.1246)
-SKILLA_CROP = (0.4075, 0.9445, 0.0156, 0.0406)
+SKILLA_CROP = (0.4105, 0.9445, 0.0156, 0.0406)
+CHAT_CROP = (0.24, 0.82, 0.02, 0.03)
 TITLE="地下城与勇士：创新世纪"
 def window_capture(window_title, crop=None, bgr=True):
     """
